@@ -1,0 +1,19 @@
+{
+    "prefix": "reproduce",
+    "dataset": "cars196_224",
+    "memory_size": 0,
+    "memory_per_class": 0,
+    "fixed_memory": false,
+    "shuffle": true,
+    "init_cls": 20,
+    "increment": 20,
+    "model_name": "slca_cars",
+    "model_postfix": "50e",
+    "convnet_type": "vit-b-p16",
+    "device": ["0","1"],
+    "seed": [1993, 1996, 1997],
+    "epochs": 50,
+    "ca_epochs": 5,
+    "ca_with_logit_norm": 0.05,
+    "milestones": [40]
+}
