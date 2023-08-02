@@ -37,5 +37,21 @@ critical factors and promising directions are analyzed in-depth to facilitate su
 7. quadprog  
 8. POT  
 
+## Pre-trained Models
+Please download pre-trained ViT-Base models from [MoCo v3](https://drive.google.com/file/d/1bshDu4jEKztZZvwpTVXSAuCsDoXwCkfy/view?usp=share_link) and [ImaegNet-21K](https://drive.google.com/file/d/1PcAOf0tJYs1FVDpj-7lrkSuwXTJXVmuk/view?usp=share_link) and then put or link the pre-trained models to ```SLCA/pretrained```
+
 ## Acknolegment
-This repo is heavily based on and [PyCIL](https://github.com/G-U-N/PyCIL), many thanks.
+This repo is heavily based on [PyCIL](https://github.com/G-U-N/PyCIL), many thanks.
+
+## Citation
+
+If you find our codes or models useful, please consider giving us a star or cite with:
+```
+@article{zhang2023slca,
+  title={SLCA: Slow Learner with Classifier Alignment for Continual Learning on a Pre-trained Model},
+  author={Zhang, Gengwei and Wang, Liyuan and Kang, Guoliang and Chen, Ling and Wei, Yunchao},
+  journal={International Conference on Computer Vision (ICCV)},
+  year={2023}
+}
+```
+
