@@ -45,7 +45,7 @@ This repo is heavily based on [PyCIL](https://github.com/G-U-N/PyCIL), many than
 
 ## Citation
 
-If you find our codes or models useful, please consider giving us a star or cite with:
+If you find our codes or paper useful, please consider giving us a star or cite with:
 ```
 @article{zhang2023slca,
   title={SLCA: Slow Learner with Classifier Alignment for Continual Learning on a Pre-trained Model},
