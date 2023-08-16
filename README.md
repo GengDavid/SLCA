@@ -47,10 +47,10 @@ This repo is heavily based on [PyCIL](https://github.com/G-U-N/PyCIL), many than
 
 If you find our codes or paper useful, please consider giving us a star or cite with:
 ```
-@article{zhang2023slca,
+@inproceedings{zhang2023slca,
   title={SLCA: Slow Learner with Classifier Alignment for Continual Learning on a Pre-trained Model},
   author={Zhang, Gengwei and Wang, Liyuan and Kang, Guoliang and Chen, Ling and Wei, Yunchao},
-  journal={International Conference on Computer Vision (ICCV)},
+  booktitle={Proceedings of the IEEE/CVF International Conference on Computer Vision},
   year={2023}
 }
 ```
