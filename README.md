@@ -2,7 +2,7 @@
 <div align="center">
   
   <div>
-  <h1>SLCA: Slow Learner with Classifier Alignment for Continual Learning on a Pre-trained Model</h1>
+  <h1>SLCA++: Unleash the Power of Sequential Fine-tuning for Continual Learning with Pre-training</h1>
   </div>
 
   <div>
@@ -13,19 +13,15 @@
 </div>
 
 
-PyTorch code for ICCV 2023 paper "[SLCA: Slow Learner with Classifier Alignment for Continual Learning on a Pre-trained Model](https://arxiv.org/abs/2303.05118)".
+PyTorch code for paper "SLCA++: Unleash the Power of Sequential Fine-tuning for Continual Learning with Pre-training", together with the code for our ICCV 2023 paper "[SLCA: Slow Learner with Classifier Alignment for Continual Learning on a Pre-trained Model](https://arxiv.org/abs/2303.05118)". 
 
-![performance_figure](slca_performance.jpg)
+## What's new?
+[2024.08] We release SLCA++, a parameter-efficient version of SLCA with even better continual performance on fine-grained benchmarks!
 
-In this work, we present an extensive analysis for continual learning on a pre-trained model (CLPM), and attribute the key challenge to a progressive overfitting problem. 
-Observing that selectively reducing the learning rate can almost resolve this issue in the representation layer, we propose a simple but extremely effective approach named 
-**Slow Learner with Classifier Alignment (SLCA)**, 
-which further improves the classification layer by modelling the class-wise distributions 
-and aligning the classification layers in a post-hoc fashion. 
-Across a variety of scenarios, our proposal provides substantial improvements for CLPM 
-(e.g., up to 49.76%, 50.05%, 44.69% and 40.16% on Split CIFAR-100, Split ImageNet-R, Split CUB-200 and Split Cars-196, respectively), 
-and thus outperforms state-of-the-art approaches by a large margin. Based on such a strong baseline, 
-critical factors and promising directions are analyzed in-depth to facilitate subsequent research.
+## Introduction
+In our paper, we present an in-depth analysis of the progressive overfitting problem from the lens of Seq FT. Considering that the overly fast representation learning and the biased classification layer constitute this particular problem, we introduce the advanced Slow Learner with Classifier Alignment (SLCA++) framework to unleash the power of Seq FT, serving as a strong baseline approach for Continual Learning with Pre-training (CLPT). Our approach involves a Slow Learner (SL) to selectively reduce the learning rate of backbone parameters, and a Classifier Alignment (CA) to align the disjoint classification layers in a post-hoc fashion. We further enhance the efficacy of SL with a symmetric cross-entropy loss (SCE), as well as employ a parameter-efficient strategy to implement Seq FT with SLCA++. Across a variety of continual learning scenarios, including class-incremental learning on general datasets like CIFAR-100 and ImageNet-R, fine-grained datasets like CUB-200 and Cars-196, and domain-incremental learning on DomainNet, our approach provides substantial improvements and outperforms state-of-the-art methods by a large margin.
+
+
 
 ## Requirement
 1. torch==1.12.0  
@@ -45,7 +41,18 @@ This repo is heavily based on [PyCIL](https://github.com/G-U-N/PyCIL), many than
 
 ## Citation
 
-If you find our codes or paper useful, please consider giving us a star or cite with:
+If you find our codes or paper useful, please consider giving us a star or cite with:  
+
+```
+@misc{zhang2024slcaunleash,
+  title={SLCA++: Unleash the Power of Sequential Fine-tuning for Continual Learning with Pre-training}, 
+  author={Zhang, Gengwei and Wang, Liyuan and Kang, Guoliang and Chen, Ling and Wei, Yunchao},
+  year={2024},
+  eprint={To be update},
+  archivePrefix={arXiv}
+}
+```
+
 ```
 @inproceedings{zhang2023slca,
   title={SLCA: Slow Learner with Classifier Alignment for Continual Learning on a Pre-trained Model},
@@ -54,4 +61,3 @@ If you find our codes or paper useful, please consider giving us a star or cite 
   year={2023}
 }
 ```
-

@@ -6,6 +6,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 from utils.toolkit import tensor2numpy, accuracy
 from scipy.spatial.distance import cdist
+from collections import OrderedDict
 
 EPSILON = 1e-8
 batch_size = 64
@@ -47,25 +48,27 @@ class BaseLearner(object):
         else:
             return self._network.feature_dim
 
-    def build_rehearsal_memory(self, data_manager, per_class, mode='icarl'):
-        if self._fixed_memory:
-            self._construct_exemplar_unified(data_manager, per_class)
-        else:
-            self._reduce_exemplar(data_manager, per_class)
-            self._construct_exemplar(data_manager, per_class, mode=mode)
-
-    def save_checkpoint(self, filename, head_only=False):
+    def save_checkpoint(self, filename, head_only=False, learnable_only=False):
         if hasattr(self._network, 'module'):
             to_save = self._network.module
         else:
             to_save = self._network
 
         if head_only:
-            to_save = to_save.fc
+            to_save_dict = to_save.fc.state_dict()
+        else:
+            to_save_dict = to_save.state_dict()
             
+        if learnable_only:
+            new_dict = OrderedDict()
+            filtered_keys = [n for n, p in to_save.named_parameters() if p.requires_grad]
+            for k in filtered_keys:
+                new_dict[k] = to_save_dict[k]
+            to_save_dict = new_dict
+
         save_dict = {
             'tasks': self._cur_task,
-            'model_state_dict': to_save.state_dict(),
+            'model_state_dict': to_save_dict,
         }
         torch.save(save_dict, '{}_{}.pth'.format(filename, self._cur_task))
 
@@ -192,30 +195,6 @@ class BaseLearner(object):
 
         return np.concatenate(vectors), np.concatenate(targets)
 
-    def _reduce_exemplar(self, data_manager, m):
-        logging.info('Reducing exemplars...({} per classes)'.format(m))
-        dummy_data, dummy_targets = copy.deepcopy(self._data_memory), copy.deepcopy(self._targets_memory)
-        self._class_means = np.zeros((self._total_classes, self.feature_dim))
-        self._data_memory, self._targets_memory = np.array([]), np.array([])
-
-        for class_idx in range(self._known_classes):
-            mask = np.where(dummy_targets == class_idx)[0]
-            dd, dt = dummy_data[mask][:m], dummy_targets[mask][:m]
-            self._data_memory = np.concatenate((self._data_memory, dd)) if len(self._data_memory) != 0 else dd
-            self._targets_memory = np.concatenate((self._targets_memory, dt)) if len(self._targets_memory) != 0 else dt
-
-            # Exemplar mean
-            idx_dataset = data_manager.get_dataset([], source='train', mode='test', appendent=(dd, dt))
-            idx_loader = DataLoader(idx_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
-            vectors, _ = self._extract_vectors(idx_loader)
-            vectors = (vectors.T / (np.linalg.norm(vectors.T, axis=0) + EPSILON)).T
-            mean = np.mean(vectors, axis=0)
-            mean = mean / np.linalg.norm(mean)
-
-            self._class_means[class_idx, :] = mean
-            
-
-
     def _compute_class_mean(self, data_manager, check_diff=False, oracle=False):
         if hasattr(self, '_class_means') and self._class_means is not None and not check_diff:
             ori_classes = self._class_means.shape[0]
@@ -290,114 +269,3 @@ class BaseLearner(object):
             self._class_means[class_idx, :] = class_mean
             self._class_covs[class_idx, ...] = class_cov
             # self._class_covs.append(class_cov)
-
-
-    def _construct_exemplar(self, data_manager, m, mode='icarl'):
-        logging.info('Constructing exemplars...({} per classes)'.format(m))
-        for class_idx in range(self._known_classes, self._total_classes):
-            data, targets, idx_dataset = data_manager.get_dataset(np.arange(class_idx, class_idx+1), source='train',
-                                                                  mode='test', ret_data=True)
-            idx_loader = DataLoader(idx_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
-            if mode == 'icarl':
-                vectors, _ = self._extract_vectors(idx_loader)
-                vectors = (vectors.T / (np.linalg.norm(vectors.T, axis=0) + EPSILON)).T
-                class_mean = np.mean(vectors, axis=0)
-                m = min(m, vectors.shape[0])
-                # Select
-                selected_exemplars = []
-                exemplar_vectors = []  # [n, feature_dim]
-                for k in range(1, m+1):
-                    S = np.sum(exemplar_vectors, axis=0)  # [feature_dim] sum of selected exemplars vectors
-                    mu_p = (vectors + S) / k  # [n, feature_dim] sum to all vectors
-                    i = np.argmin(np.sqrt(np.sum((class_mean - mu_p) ** 2, axis=1)))
-                    selected_exemplars.append(np.array(data[i]))  # New object to avoid passing by inference
-                    exemplar_vectors.append(np.array(vectors[i]))  # New object to avoid passing by inference
-
-                    vectors = np.delete(vectors, i, axis=0)  # Remove it to avoid duplicative selection
-                    data = np.delete(data, i, axis=0)  # Remove it to avoid duplicative selection
-                # uniques = np.unique(selected_exemplars, axis=0)
-                # print('Unique elements: {}'.format(len(uniques)))
-                selected_exemplars = np.array(selected_exemplars)
-                exemplar_targets = np.full(m, class_idx)
-            else:
-                selected_index = np.random.choice(len(data), (min(m, len(data)),), replace=False)
-                selected_exemplars = data[selected_index]
-                exemplar_targets = np.full(min(m, len(data)), class_idx)
-            self._data_memory = np.concatenate((self._data_memory, selected_exemplars)) if len(self._data_memory) != 0 \
-                else selected_exemplars
-            self._targets_memory = np.concatenate((self._targets_memory, exemplar_targets)) if \
-                len(self._targets_memory) != 0 else exemplar_targets
-
-            # Exemplar mean
-            idx_dataset = data_manager.get_dataset([], source='train', mode='test',
-                                                   appendent=(selected_exemplars, exemplar_targets))
-            idx_loader = DataLoader(idx_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
-            vectors, _ = self._extract_vectors(idx_loader)
-            vectors = (vectors.T / (np.linalg.norm(vectors.T, axis=0) + EPSILON)).T
-            mean = np.mean(vectors, axis=0)
-            mean = mean / np.linalg.norm(mean)
-
-            self._class_means[class_idx, :] = mean
-
-    def _construct_exemplar_unified(self, data_manager, m):
-        logging.info('Constructing exemplars for new classes...({} per classes)'.format(m))
-        _class_means = np.zeros((self._total_classes, self.feature_dim))
-
-        # Calculate the means of old classes with newly trained network
-        for class_idx in range(self._known_classes):
-            mask = np.where(self._targets_memory == class_idx)[0]
-            class_data, class_targets = self._data_memory[mask], self._targets_memory[mask]
-
-            class_dset = data_manager.get_dataset([], source='train', mode='test',
-                                                  appendent=(class_data, class_targets))
-            class_loader = DataLoader(class_dset, batch_size=batch_size, shuffle=False, num_workers=4)
-            vectors, _ = self._extract_vectors(class_loader)
-            vectors = (vectors.T / (np.linalg.norm(vectors.T, axis=0) + EPSILON)).T
-            mean = np.mean(vectors, axis=0)
-            mean = mean / np.linalg.norm(mean)
-
-            _class_means[class_idx, :] = mean
-
-        # Construct exemplars for new classes and calculate the means
-        for class_idx in range(self._known_classes, self._total_classes):
-            data, targets, class_dset = data_manager.get_dataset(np.arange(class_idx, class_idx+1), source='train',
-                                                                 mode='test', ret_data=True)
-            class_loader = DataLoader(class_dset, batch_size=batch_size, shuffle=False, num_workers=4)
-
-            vectors, _ = self._extract_vectors(class_loader)
-            vectors = (vectors.T / (np.linalg.norm(vectors.T, axis=0) + EPSILON)).T
-            class_mean = np.mean(vectors, axis=0)
-
-            # Select
-            selected_exemplars = []
-            exemplar_vectors = []
-            for k in range(1, m+1):
-                S = np.sum(exemplar_vectors, axis=0)  # [feature_dim] sum of selected exemplars vectors
-                mu_p = (vectors + S) / k  # [n, feature_dim] sum to all vectors
-                i = np.argmin(np.sqrt(np.sum((class_mean - mu_p) ** 2, axis=1)))
-
-                selected_exemplars.append(np.array(data[i]))  # New object to avoid passing by inference
-                exemplar_vectors.append(np.array(vectors[i]))  # New object to avoid passing by inference
-
-                vectors = np.delete(vectors, i, axis=0)  # Remove it to avoid duplicative selection
-                data = np.delete(data, i, axis=0)  # Remove it to avoid duplicative selection
-
-            selected_exemplars = np.array(selected_exemplars)
-            exemplar_targets = np.full(m, class_idx)
-            self._data_memory = np.concatenate((self._data_memory, selected_exemplars)) if len(self._data_memory) != 0 \
-                else selected_exemplars
-            self._targets_memory = np.concatenate((self._targets_memory, exemplar_targets)) if \
-                len(self._targets_memory) != 0 else exemplar_targets
-
-            # Exemplar mean
-            exemplar_dset = data_manager.get_dataset([], source='train', mode='test',
-                                                     appendent=(selected_exemplars, exemplar_targets))
-            exemplar_loader = DataLoader(exemplar_dset, batch_size=batch_size, shuffle=False, num_workers=4)
-            vectors, _ = self._extract_vectors(exemplar_loader)
-            vectors = (vectors.T / (np.linalg.norm(vectors.T, axis=0) + EPSILON)).T
-            mean = np.mean(vectors, axis=0)
-            mean = mean / np.linalg.norm(mean)
-
-            _class_means[class_idx, :] = mean
-
-        self._class_means = _class_means

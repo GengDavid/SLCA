@@ -186,6 +186,98 @@ default_cfgs = {
 }
 
 
+class LoraMlp(nn.Module):
+    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.,
+                    lora_rank=4, lora_scale=0.8):
+        super().__init__()
+        out_features = out_features or in_features
+        hidden_features = hidden_features or in_features
+        self.hidden_features = hidden_features
+        self.fc1 = nn.Linear(in_features, hidden_features)
+        self.act = act_layer()
+        self.fc2 = nn.Linear(hidden_features, out_features)
+        self.drop = nn.Dropout(drop)
+
+        self.lora_rank = lora_rank
+        self.lora_1_B = torch.nn.Parameter(torch.zeros(hidden_features, self.lora_rank))
+        self.lora_1_A = torch.nn.Parameter(torch.zeros(self.lora_rank, in_features))
+        trunc_normal_(self.lora_1_A, std=0.02)
+
+        self.lora_2_B = torch.nn.Parameter(torch.zeros(in_features, self.lora_rank))
+        self.lora_2_A = torch.nn.Parameter(torch.zeros(self.lora_rank, hidden_features))
+        trunc_normal_(self.lora_2_A, std=0.02)
+
+        self.lora_scale = lora_scale
+
+    def init_lora(self):
+        U, S, Vh = torch.linalg.svd(self.fc1.weight)
+        self.lora_1_A.data[:] = Vh[:self.lora_rank, :]
+
+        U, S, Vh = torch.linalg.svd(self.fc2.weight)
+        self.lora_2_A.data[:] = Vh[:self.lora_rank, :]
+
+    def forward(self, x):
+        lora_w = torch.matmul(self.lora_1_B, self.lora_1_A)*self.lora_scale
+
+        # x = self.fc1(x)
+        x = F.linear(x, lora_w+self.fc1.weight, bias=self.fc1.bias)
+        x = self.act(x)
+        x = self.drop(x)
+
+        lora_w = torch.matmul(self.lora_2_B, self.lora_2_A)*self.lora_scale
+
+        # x = self.fc2(x)
+        x = F.linear(x, lora_w+self.fc2.weight, bias=self.fc2.bias)
+        x = self.drop(x)
+
+        return x
+
+
+class LoraAttention(nn.Module):
+    def __init__(self, dim, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0., lora_rank=4, lora_scale=0.8):
+        super().__init__()
+        self.num_heads = num_heads
+        head_dim = dim // num_heads
+        self.scale = head_dim ** -0.5
+
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop)
+
+
+        self.lora_rank = lora_rank
+        self.lora_B = torch.nn.Parameter(torch.zeros(dim*3, lora_rank))
+        self.lora_A = torch.nn.Parameter(torch.zeros(lora_rank, dim))
+        trunc_normal_(self.lora_A, std=0.02)
+
+
+        self.lora_scale = lora_scale
+
+    def init_lora(self):
+        U, S, Vh = torch.linalg.svd(self.qkv.weight)
+        self.lora_A.data[:] = Vh[:self.lora_rank, :]
+
+    def forward(self, x):
+        B, N, C = x.shape
+
+        lora_w = torch.matmul(self.lora_B, self.lora_A)*self.lora_scale
+        qkv = F.linear(x, lora_w+self.qkv.weight, bias=self.qkv.bias)
+        qkv = qkv.reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        # qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv.unbind(0)   # make torchscript happy (cannot use tensor as tuple)
+
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x
+
+
 class Attention(nn.Module):
     def __init__(self, dim, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0.):
         super().__init__()
@@ -245,7 +337,7 @@ class VisionTransformer(nn.Module):
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, embed_dim=768, depth=12,
                  num_heads=12, mlp_ratio=4., qkv_bias=True, representation_size=None, distilled=False,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0., embed_layer=PatchEmbed, norm_layer=None,
-                 act_layer=None, weight_init='', with_adapter=False, global_pool=False):
+                 act_layer=None, weight_init='', global_pool=False,lora_rank=-1):
         """
         Args:
             img_size (int, tuple): input image size
@@ -274,7 +366,6 @@ class VisionTransformer(nn.Module):
         norm_layer = norm_layer or partial(nn.LayerNorm, eps=1e-6)
         act_layer = act_layer or nn.GELU
 
-        self.with_adapter = with_adapter
         self.global_pool = global_pool
 
         self.patch_embed = embed_layer(
@@ -310,17 +401,23 @@ class VisionTransformer(nn.Module):
         if distilled:
             self.head_dist = nn.Linear(self.embed_dim, self.num_classes) if num_classes > 0 else nn.Identity()
 
-        if self.with_adapter:
-            self.adp_layers = []
-            for adp_i in range(4):
-                self.adp_layers.append(self.get_adapter(embed_dim))
-            self.adp_layers = nn.ModuleList(self.adp_layers)
-            self.adp_norm = nn.LayerNorm(embed_dim)
-        self.extra_blocks = nn.ModuleList([])
         self.init_weights(weight_init)
-        if self.with_adapter:
-            for adp_i in range(4):
-                nn.init.constant_(self.adp_layers[adp_i][-2].bias, -2.19)
+
+
+        self.lora_rank = lora_rank
+        if self.lora_rank>0:
+            self.with_lora = True
+            self.lora_lp = depth
+            self.attn_lora = True
+            self.mlp_lora = True
+            if self.mlp_lora:
+                for b_idx in range(self.lora_lp):
+                    self.blocks[b_idx].mlp = LoraMlp(in_features=self.embed_dim, hidden_features=int(self.embed_dim*mlp_ratio), act_layer=act_layer, drop=drop_rate, lora_rank=lora_rank)
+            if self.attn_lora:
+                for b_idx in range(self.lora_lp):
+                    self.blocks[b_idx].attn = LoraAttention(self.embed_dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop_rate, proj_drop=drop_rate, lora_rank=lora_rank)
+        else:
+            self.with_lora = False
 
     def get_adapter(self, embed_dim):
         return nn.Sequential(
@@ -372,26 +469,20 @@ class VisionTransformer(nn.Module):
         if self.num_tokens == 2:
             self.head_dist = nn.Linear(self.embed_dim, self.num_classes) if num_classes > 0 else nn.Identity()
 
-    def forward_features(self, x, prompt=None, layer_feat=False):
+    def forward_features(self, x, layer_feat=False):
         img = x
         x = self.patch_embed(x)
         cls_token = self.cls_token.expand(x.shape[0], -1, -1)  # stole cls_tokens impl from Phil Wang, thanks
-        prompt_length=0
-        if self.dist_token is None and prompt is None:
+        if self.dist_token is None:
             x = torch.cat((cls_token, x), dim=1)
-        elif prompt is not None:
-            x = torch.cat((prompt, cls_token, x), dim=1)
-            prompt_length = prompt.size(1)
         else:
             x = torch.cat((cls_token, self.dist_token.expand(x.shape[0], -1, -1), x), dim=1)
-        x[:, prompt_length:] = self.pos_drop(x[:, prompt_length:] + self.pos_embed)
+        x = self.pos_drop(x + self.pos_embed)
         # x = self.blocks(x)
         feats = []
         feats_l = []
         for b_id, block in enumerate(self.blocks):
             x = block(x)
-            if self.with_adapter and (b_id+1) % (len(self.blocks)//4)==0:
-                feats.append(x)
             if layer_feat:
                 feats_l.append(x)
             if b_id == len(self.blocks)-2:
@@ -400,44 +491,19 @@ class VisionTransformer(nn.Module):
         if layer_feat:
             return feats_l
 
-        if len(self.extra_blocks)>0:
-            assert not self.with_adapter
-            outs = [self.norm(x)[:, 0]]
-            for extra_block in self.extra_blocks:
-                outs.append(extra_block(penultimate_feat)[:, 0]) 
-            return outs
-
-        if self.with_adapter and self.training:
-            adp_inp = feats[-1][:, 0].detach()
-            masks = []
-            for adp_i, adp_layer in enumerate(self.adp_layers):
-                m_ = adp_layer(adp_inp)
-                #if adp_i==0:
-                #    m_ = m_.mean(1)
-                #    m_ = torch.sigmoid(m_)
-                adp_inp = m_ * feats[adp_i][:, 0] + feats[adp_i][:, 0].detach()
-                masks.append(m_)
-            return adp_inp, torch.cat(masks, dim=1)
-            #return self.adp_norm(adp_inp.unsqueeze(1)).squeeze(1)
- 
         if self.global_pool:
             x = x[:, 1:, :].mean(dim=1)  # global pool without cls token
             return self.norm(x)
  
         x = self.norm(x)
         if self.dist_token is None:
-            if prompt is not None:
-                return x[:, :prompt_length].mean(dim=1)
             return self.pre_logits(x[:, 0])
         else:
             return x[:, 0] # , x[:, 1]
 
-    def forward(self, x, prompt=None, layer_feat=False):
-        x = self.forward_features(x, prompt, layer_feat)
-        if self.with_adapter and self.training:
-            x = {'masks': x[1], 'features': x[0]}
-        else:
-            x = {'features': x}
+    def forward(self, x, layer_feat=False):
+        x = self.forward_features(x, layer_feat)
+        x = {'features': x}
         #if self.head_dist is not None:
         #    x, x_dist = self.head(x[0]), self.head_dist(x[1])  # x must be a tuple
         #    if self.training and not torch.jit.is_scripting():
@@ -632,13 +698,13 @@ def _create_vision_transformer(variant, pretrained=False, default_cfg=None, **kw
 
 
 @register_model
-def vit_base_patch16_224_in21k(pretrained=False, adapter=False, **kwargs):
+def vit_base_patch16_224_in21k(pretrained=False, **kwargs):
     """ ViT-Base model (ViT-B/16) from original paper (https://arxiv.org/abs/2010.11929).
     ImageNet-21k weights @ 224x224, source https://github.com/google-research/vision_transformer.
     NOTE: this model has valid 21k classifier head and no representation (pre-logits) layer
     """
     model_kwargs = dict(
-        patch_size=16, embed_dim=768, depth=12, num_heads=12, with_adapter=adapter, **kwargs)
+        patch_size=16, embed_dim=768, depth=12, num_heads=12, **kwargs)
     model = _create_vision_transformer('vit_base_patch16_224_in21k', pretrained=pretrained, **model_kwargs)
     del model.head
     del model.norm
@@ -646,13 +712,13 @@ def vit_base_patch16_224_in21k(pretrained=False, adapter=False, **kwargs):
     return model
 
 @register_model
-def vit_base_patch16_224_mocov3(pretrained=False, adapter=False, **kwargs):
+def vit_base_patch16_224_mocov3(pretrained=False, **kwargs):
     """ ViT-Base model (ViT-B/16) from original paper (https://arxiv.org/abs/2010.11929).
     ImageNet-21k weights @ 224x224, source https://github.com/google-research/vision_transformer.
     NOTE: this model has valid 21k classifier head and no representation (pre-logits) layer
     """
     model_kwargs = dict(
-        patch_size=16, embed_dim=768, depth=12, num_heads=12, with_adapter=adapter, **kwargs)
+        patch_size=16, embed_dim=768, depth=12, num_heads=12, **kwargs)
     model = _create_vision_transformer('vit_base_patch16_224_in21k', pretrained=False, **model_kwargs)
     del model.head
     ckpt = torch.load('mocov3-vit-base-300ep.pth', map_location='cpu')['model']
@@ -664,3 +730,36 @@ def vit_base_patch16_224_mocov3(pretrained=False, adapter=False, **kwargs):
     return model
 
 
+
+@register_model
+def vit_base_lora_patch16_224_in21k(pretrained=False, lora_rank=4, **kwargs):
+    """ ViT-Base model (ViT-B/16) from original paper (https://arxiv.org/abs/2010.11929).
+    ImageNet-21k weights @ 224x224, source https://github.com/google-research/vision_transformer.
+    NOTE: this model has valid 21k classifier head and no representation (pre-logits) layer
+    """
+    model_kwargs = dict(
+        patch_size=16, embed_dim=768, depth=12, num_heads=12, lora_rank=lora_rank, **kwargs)
+    model = _create_vision_transformer('vit_base_patch16_224_in21k', pretrained=pretrained, **model_kwargs)
+    del model.head
+    del model.norm
+    model.norm = nn.LayerNorm(768)
+        
+    return model
+
+@register_model
+def vit_base_lora_patch16_224_mocov3(pretrained=False, lora_rank=4, **kwargs):
+    """ ViT-Base model (ViT-B/16) from original paper (https://arxiv.org/abs/2010.11929).
+    ImageNet-21k weights @ 224x224, source https://github.com/google-research/vision_transformer.
+    NOTE: this model has valid 21k classifier head and no representation (pre-logits) layer
+    """
+    model_kwargs = dict(
+        patch_size=16, embed_dim=768, depth=12, num_heads=12, lora_rank=lora_rank, **kwargs)
+    model = _create_vision_transformer('vit_base_patch16_224_in21k', pretrained=False, **model_kwargs)
+    del model.head
+    ckpt = torch.load('mocov3-vit-base-300ep.pth', map_location='cpu')['model']
+    state_dict = model.state_dict()
+    state_dict.update(ckpt)
+    model.load_state_dict(state_dict)
+    del model.norm
+    model.norm = nn.LayerNorm(768)
+    return model

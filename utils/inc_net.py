@@ -4,11 +4,12 @@ from torch import nn
 from convs.cifar_resnet import resnet32
 from convs.resnet import resnet18, resnet34, resnet50
 from convs.linears import SimpleContinualLinear
-from convs.vits import vit_base_patch16_224_in21k, vit_base_patch16_224_mocov3
+from convs.vits import vit_base_patch16_224_in21k, vit_base_patch16_224_mocov3, vit_base_lora_patch16_224_in21k, vit_base_lora_patch16_224_mocov3
 import torch.nn.functional as F
 
-def get_convnet(convnet_type, pretrained=False):
-    name = convnet_type.lower()
+def get_convnet(cfg, pretrained=False):
+    name = cfg['convnet_type']
+    name = name.lower()
     if name == 'resnet32':
         return resnet32()
     elif name == 'resnet18':
@@ -22,19 +23,23 @@ def get_convnet(convnet_type, pretrained=False):
     elif name == 'resnet50':
         return resnet50(pretrained=pretrained)
     elif name == 'vit-b-p16':
-        return vit_base_patch16_224_in21k(pretrained=pretrained)
+        return vit_base_patch16_224_in21k(pretrained=True)
     elif name == 'vit-b-p16-mocov3':
         return vit_base_patch16_224_mocov3(pretrained=True)
+    elif name == 'vit-b-p16-lora':
+        return vit_base_lora_patch16_224_in21k(pretrained=True, lora_rank=cfg['lora_rank'])
+    elif name == 'vit-b-p16-lora-mocov3':
+        return vit_base_lora_patch16_224_mocov3(pretrained=True, lora_rank=cfg['lora_rank'])
     else:
-        raise NotImplementedError('Unknown type {}'.format(convnet_type))
+        raise NotImplementedError('Unknown type {}'.format(name))
 
 
 class BaseNet(nn.Module):
 
-    def __init__(self, convnet_type, pretrained):
+    def __init__(self, cfg, pretrained):
         super(BaseNet, self).__init__()
 
-        self.convnet = get_convnet(convnet_type, pretrained)
+        self.convnet = get_convnet(cfg, pretrained)
         self.fc = None
 
     @property
@@ -76,10 +81,14 @@ class BaseNet(nn.Module):
 
 class FinetuneIncrementalNet(BaseNet):
 
-    def __init__(self, convnet_type, pretrained, fc_with_ln=False):
-        super().__init__(convnet_type, pretrained)
+    def __init__(self, cfg, pretrained, fc_with_ln=False):
+        super().__init__(cfg, pretrained)
         self.old_fc = None
         self.fc_with_ln = fc_with_ln
+        if 'fc_scale_mu' in cfg.keys():
+            self.fc_scale_mu = cfg['fc_scale_mu']
+        else:
+            self.fc_scale_mu = -1
 
 
     def extract_layerwise_vector(self, x, pool=True):
@@ -106,7 +115,7 @@ class FinetuneIncrementalNet(BaseNet):
             self.old_fc.heads.append(copy.deepcopy(self.fc.heads[-1]))
 
     def generate_fc(self, in_dim, out_dim):
-        fc = SimpleContinualLinear(in_dim, out_dim)
+        fc = SimpleContinualLinear(in_dim, out_dim, scale_mu=self.fc_scale_mu)
 
         return fc
 

@@ -10,13 +10,34 @@ from timm.models.layers.weight_init import trunc_normal_
 from timm.models.layers import Mlp
 from copy import deepcopy
 
+class SimpleScaler(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(1), requires_grad=False)  
+
+    def forward(self, x):
+        weight = self.weight
+        x = x*weight.unsqueeze(1)
+
+        return x
+
+
 class SimpleContinualLinear(nn.Module):
-    def __init__(self, embed_dim, nb_classes, feat_expand=False, with_norm=False):
+    def __init__(self, embed_dim, nb_classes, feat_expand=False, with_norm=False, scale_mu=-1):
         super().__init__()
 
         self.embed_dim = embed_dim
         self.feat_expand = feat_expand
         self.with_norm = with_norm
+        self.scale_mu = scale_mu
+
+        if self.scale_mu > 0:
+            scales = []
+            scales.append(SimpleScaler())
+            self.scales = nn.ModuleList(scales)
+        else:
+            self.scales = None
+
         heads = []
         single_head = []
         if with_norm:
@@ -34,18 +55,28 @@ class SimpleContinualLinear(nn.Module):
                     nn.init.constant_(m.bias, 0) 
 
 
+    def update_scale(self):
+        if self.scales is None:
+            return
+        num_old_tasks = len(self.heads)-1
+        for t_id in range(num_old_tasks): # update scale for old tasks
+            new_scale = 1+self.scale_mu*(num_old_tasks-t_id)
+            self.scales[t_id].weight.data = torch.tensor([new_scale]).to(self.scales[t_id].weight)
+
     def backup(self):
         self.old_state_dict = deepcopy(self.state_dict())
 
     def recall(self):
         self.load_state_dict(self.old_state_dict)
 
-
     def update(self, nb_classes, freeze_old=True):
         single_head = []
         if self.with_norm:
             single_head.append(nn.LayerNorm(self.embed_dim))
             
+        if self.scale_mu>0:
+            self.scales.append(SimpleScaler())
+
         _fc = nn.Linear(self.embed_dim, nb_classes, bias=True)
         trunc_normal_(_fc.weight, std=.02)
         nn.init.constant_(_fc.bias, 0) 
@@ -63,6 +94,8 @@ class SimpleContinualLinear(nn.Module):
         out = []
         for ti in range(len(self.heads)):
             fc_inp = x[ti] if self.feat_expand else x
+            if self.scale_mu>0:
+                fc_inp = self.scales[ti](fc_inp)
             out.append(self.heads[ti](fc_inp))
         out = {'logits': torch.cat(out, dim=1)}
         return out
