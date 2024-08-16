@@ -13,7 +13,7 @@
 </div>
 
 
-PyTorch code for paper "SLCA++: Unleash the Power of Sequential Fine-tuning for Continual Learning with Pre-training", together with the code for our ICCV 2023 paper "[SLCA: Slow Learner with Classifier Alignment for Continual Learning on a Pre-trained Model](https://arxiv.org/abs/2303.05118)". 
+PyTorch code for paper "[SLCA++: Unleash the Power of Sequential Fine-tuning for Continual Learning with Pre-training](https://arxiv.org/abs/2408.08295)", together with the code for our ICCV 2023 paper "[SLCA: Slow Learner with Classifier Alignment for Continual Learning on a Pre-trained Model](https://arxiv.org/abs/2303.05118)". 
 
 ## What's new?
 [2024.08] We release SLCA++, a parameter-efficient version of SLCA with even better continual performance on fine-grained benchmarks!
@@ -44,12 +44,13 @@ This repo is heavily based on [PyCIL](https://github.com/G-U-N/PyCIL), many than
 If you find our codes or paper useful, please consider giving us a star or cite with:  
 
 ```
-@misc{zhang2024slcaunleash,
-  title={SLCA++: Unleash the Power of Sequential Fine-tuning for Continual Learning with Pre-training}, 
-  author={Zhang, Gengwei and Wang, Liyuan and Kang, Guoliang and Chen, Ling and Wei, Yunchao},
-  year={2024},
-  eprint={To be update},
-  archivePrefix={arXiv}
+@misc{zhang2024slcaunleashpowersequential,
+      title={SLCA++: Unleash the Power of Sequential Fine-tuning for Continual Learning with Pre-training}, 
+      author={Zhang, Gengwei and Wang, Liyuan and Kang, Guoliang and Chen, Ling and Wei, Yunchao},
+      year={2024},
+      eprint={2408.08295},
+      archivePrefix={arXiv},
+      url={https://arxiv.org/abs/2408.08295}, 
 }
 ```
 
