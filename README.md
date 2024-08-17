@@ -36,7 +36,7 @@ In our paper, we present an in-depth analysis of the progressive overfitting pro
 ## Pre-trained Models
 Please download pre-trained ViT-Base models from [MoCo v3](https://drive.google.com/file/d/1bshDu4jEKztZZvwpTVXSAuCsDoXwCkfy/view?usp=share_link) and [ImaegNet-21K](https://drive.google.com/file/d/1PcAOf0tJYs1FVDpj-7lrkSuwXTJXVmuk/view?usp=share_link) and then put or link the pre-trained models to ```SLCA/pretrained```
 
-## Acknolegment
+## Acknowledgement
 This repo is heavily based on [PyCIL](https://github.com/G-U-N/PyCIL), many thanks.
 
 ## Citation
